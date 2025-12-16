@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Espejo de Probabilidad</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; }
+    .card { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
+    label { display: block; margin: 0.25rem 0; }
+    input, textarea, select { width: 100%; padding: 0.5rem; }
+    button { padding: 0.5rem 1rem; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    @media (max-width: 700px) { .row { grid-template-columns: 1fr; } }
+    .list { font-size: 0.9rem; color: #444; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Espejo de Probabilidad</h1>
+
+    <div class="card">
+      <label>Último crash real</label>
+      <input id="lastCrash" placeholder="ej: 3.04" />
+      <div style="margin-top: 12px;"><button id="saveCrash">Guardar crash</button></div>
+      <div id="saveRes" class="list"></div>
+      <h3>Resumen (datos acumulados)</h3>
+      <pre id="summary" class="list"></pre>
+    </div>
+
+    <div class="card">
+      <h3>Simulaciones en tiempo real</h3>
+      <div class="row">
+        <div>
+          <strong>Sim 1</strong>
+          <div class="list" id="sim1Out">Detenido</div>
+          <button id="sim1Start">Iniciar</button>
+          <button id="sim1Stop">Detener</button>
+          <div class="list" id="sim1Prob"></div>
+        </div>
+        <div>
+          <strong>Sim 2</strong>
+          <div class="list" id="sim2Out">Detenido</div>
+          <button id="sim2Start">Iniciar</button>
+          <button id="sim2Stop">Detener</button>
+          <div class="list" id="sim2Prob"></div>
+        </div>
+        <div>
+          <strong>Sim 3</strong>
+          <div class="list" id="sim3Out">Detenido</div>
+          <button id="sim3Start">Iniciar</button>
+          <button id="sim3Stop">Detener</button>
+          <div class="list" id="sim3Prob"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+    async function updateSummary() {
+      try {
+        const r = await fetch('/api/summary');
+        const d = await r.json();
+        const lines = [];
+        lines.push(`Eventos: ${d.n}`);
+        lines.push(`Media E[X]: ${d.mean}`);
+        lines.push(`Mediana: ${d.median}`);
+        lines.push(`Probabilidades (P(X ≥ x)):`);
+        for (const k of Object.keys(d.pge)) {
+          lines.push(`  x=${k}  →  ${d.pge[k]}`);
+        }
+        document.getElementById('summary').textContent = lines.join('\n');
+        // Mostrar 3 probabilidades clave en cada simulación
+        const p = d.pge;
+        const keys = ['1.50','2.00','3.00'];
+        const text = `P(X ≥ x):\n  x=${keys[0]} → ${p[keys[0]]}\n  x=${keys[1]} → ${p[keys[1]]}\n  x=${keys[2]} → ${p[keys[2]]}`;
+        ['sim1Prob','sim2Prob','sim3Prob'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = text; });
+      } catch (e) {
+        document.getElementById('summary').textContent = 'Sin datos o error al cargar resumen.';
+      }
+    }
+    document.getElementById('saveCrash').onclick = async () => {
+      const v = document.getElementById('lastCrash').value.trim();
+      if (!v) return;
+      const r = await fetch('/api/add-crash', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: v }) });
+      const d = await r.json();
+      if (d.error) document.getElementById('saveRes').textContent = d.error; else document.getElementById('saveRes').textContent = 'Crash guardado';
+      updateSummary();
+    };
+    updateSummary();
+
+    // Simulaciones espejo: 3 columnas
+    function attachSim(id) {
+      let es = null;
+      const out = document.getElementById(id + 'Out');
+      document.getElementById(id + 'Start').onclick = () => {
+        if (es) return;
+        es = new EventSource(`/api/sim-stream?id=${id}&step=0.01&period=100`);
+        es.onmessage = (ev) => {
+          const d = JSON.parse(ev.data);
+          if (d.type === 'tick') {
+            out.textContent = `🛩️ x=${d.x}  crash@R=${d.R}`;
+          } else if (d.type === 'crash') {
+            out.textContent = `💥 CRASH R=${d.R}`;
+          }
+        };
+        es.onerror = () => { es && es.close(); es = null; };
+      };
+      document.getElementById(id + 'Stop').onclick = () => { if (es) { es.close(); es = null; out.textContent = 'Detenido'; } };
+    }
+    attachSim('sim1');
+    attachSim('sim2');
+    attachSim('sim3');
+  </script>
+</body>
+</html>
